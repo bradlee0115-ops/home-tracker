@@ -9,6 +9,15 @@
     return e ? `${e}억${r ? " " + r.toLocaleString("ko-KR") : ""}` : `${r.toLocaleString("ko-KR")}만`;
   };
   const py = (a) => Math.round(a / 3.3058);
+  const typ = (a) => Math.floor(a);                       // 전용면적 타입(59, 84 …)
+  const short = (man) => `${+(man / 10000).toFixed(2)}억`; // 162500 → 16.25억
+  const SIZES = [["전체", () => true], ["59㎡ 이하", (a) => a < 60], ["60~85㎡", (a) => a >= 60 && a < 86], ["85㎡ 초과", (a) => a >= 86]];
+  let size = "전체";
+  document.querySelector(".cx thead th:nth-child(5)").textContent = "타입별 최근 실거래";
+  document.head.insertAdjacentHTML("beforeend", `<style>
+    .types{display:grid;grid-template-columns:auto auto auto;justify-content:end;gap:2px 10px;align-items:baseline}
+    .types .t{color:var(--muted);font-size:.8rem}.types .d{color:var(--muted);font-size:.8rem}
+    .chips+.chips{margin-left:8px;padding-left:8px;border-left:1px solid var(--line)}</style>`);
   const day = (s) => new Date(s + "T00:00:00+09:00");
   const today = new Date();
   const daysAgo = (s) => (today - day(s)) / 86400000;
@@ -39,22 +48,34 @@
   for (const t of trades) if (t.complex) (byCx[t.complex] ||= []).push(t);
 
   function renderChips() {
-    $("chips").innerHTML = regions.map((r) =>
-      `<button type="button" aria-pressed="${r === sel}" data-r="${r}">${r}</button>`).join("");
-    $("chips").querySelectorAll("button").forEach((b) => b.onclick = () => { sel = b.dataset.r; renderChips(); renderTable(); });
+    $("chips").innerHTML = `<div class="chips" role="group" aria-label="지역">` + regions.map((r) =>
+      `<button type="button" aria-pressed="${r === sel}" data-r="${r}">${r}</button>`).join("") + `</div>`
+      + `<div class="chips" role="group" aria-label="전용면적">` + SIZES.map(([k]) =>
+      `<button type="button" aria-pressed="${k === size}" data-s="${k}">${k}</button>`).join("") + `</div>`;
+    $("chips").querySelectorAll("button[data-r]").forEach((b) => b.onclick = () => { sel = b.dataset.r; renderChips(); renderTable(); });
+    $("chips").querySelectorAll("button[data-s]").forEach((b) => b.onclick = () => { size = b.dataset.s; renderChips(); renderTable(); });
   }
   function renderTable() {
     const rows = cx.filter((c) => sel === "전체" || c.region === sel);
     $("cx-body").innerHTML = rows.map((c) => {
-      const ts = (byCx[c.name] || []).filter((t) => !t.cancel);
-      const last = ts[0];
+      const fit = SIZES.find(([k]) => k === size)[1];
+      const ts = (byCx[c.name] || []).filter((t) => !t.cancel && fit(t.area));
       const n90 = ts.filter((t) => daysAgo(t.date) <= 90).length;
+      const latest = {};                                   // 타입별 가장 최근 거래
+      for (const t of ts) if (!latest[typ(t.area)]) latest[typ(t.area)] = t;
+      const types = Object.keys(latest).map(Number).sort((a, b) => a - b);
+      const shown = types.slice(0, 3);
+      const cell = types.length
+        ? `<div class="types">${shown.map((k) => { const t = latest[k];
+            return `<span class="t">${k}㎡</span><b>${short(t.price)}</b><span class="d">${t.date.slice(5).replace("-", "/")}</span>`; }).join("")}</div>`
+          + (types.length > 3 ? `<small>외 ${types.length - 3}개 타입</small>` : "")
+        : "<small>최근 거래 없음</small>";
       const ask = c.min_ask ? (c.min_ask === c.max_ask ? `${c.min_ask}억` : `${c.min_ask}~${c.max_ask}억`) : "-";
       return `<tr tabindex="0" data-n="${c.name}">
         <td><b>${c.name}</b><br><small>${c.zone}</small></td><td>${c.dong}</td>
         <td>${c.built || "-"}년<br><small>${(c.households || 0).toLocaleString()}세대</small></td>
         <td><span class="tag">${(c.invest_class || c.age_class || "").split("(")[0]}</span></td>
-        <td class="num">${last ? `<b>${eok(last.price)}</b><br><small>${last.date} · ${py(last.area)}평 ${last.floor}층</small>` : "<small>최근 거래 없음</small>"}</td>
+        <td class="num">${cell}</td>
         <td class="num">${n90}건</td><td class="num">${ask}</td></tr>`;
     }).join("");
     $("cx-body").querySelectorAll("tr").forEach((tr) => {
@@ -75,7 +96,7 @@
       <td>${t.date}</td><td>${t.area}㎡ (${py(t.area)}평)</td><td>${t.floor}층</td><td class="num">${eok(t.price)}</td></tr>`).join("")
       : `<tr><td colspan="4">이 기간에 연결된 실거래가 없습니다. 이름이 다르게 등록돼 있을 수 있으니 아래 '연결 안 된 단지명'을 확인하세요.</td></tr>`;
     const groups = {};
-    for (const t of ts.filter((t) => !t.cancel)) (groups[py(t.area) + "평"] ||= []).push({ x: day(t.date).getTime(), y: t.price / 10000 });
+    for (const t of ts.filter((t) => !t.cancel)) (groups[typ(t.area) + "㎡"] ||= []).push({ x: day(t.date).getTime(), y: t.price / 10000 });
     if (chart) chart.destroy();
     if (window.Chart) {
       const css = getComputedStyle(document.documentElement);
