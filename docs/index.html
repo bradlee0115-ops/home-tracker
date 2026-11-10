@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>우리집 후보 실거래 기록</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏠</text></svg>">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <h1>우리집 후보 실거래 기록</h1>
+  <p class="sub" id="updated">데이터를 불러오는 중입니다.</p>
+</header>
+
+<main>
+  <section class="hero" aria-labelledby="new-h">
+    <h2 id="new-h">새로 신고된 거래</h2>
+    <p class="hint" id="new-hint"></p>
+    <ol class="ledger" id="ledger"></ol>
+  </section>
+
+  <section aria-labelledby="cx-h">
+    <div class="section-head">
+      <h2 id="cx-h">관심 단지</h2>
+      <div class="chips" id="chips" role="group" aria-label="지역 선택"></div>
+    </div>
+    <div class="table-wrap">
+      <table class="cx">
+        <thead><tr>
+          <th scope="col">단지</th><th scope="col">동</th><th scope="col">준공·세대</th>
+          <th scope="col">분류</th><th scope="col" class="num">최근 실거래</th>
+          <th scope="col" class="num">3개월 거래</th><th scope="col" class="num">엑셀 호가</th>
+        </tr></thead>
+        <tbody id="cx-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="detail" class="detail" hidden aria-live="polite">
+    <div class="section-head">
+      <h2 id="detail-h"></h2>
+      <button type="button" class="close" id="detail-close">닫기</button>
+    </div>
+    <p class="meta" id="detail-meta"></p>
+    <div class="chart-box"><canvas id="chart" aria-label="실거래 가격 추이"></canvas></div>
+    <div class="table-wrap">
+      <table class="trades"><thead><tr>
+        <th scope="col">계약일</th><th scope="col">전용</th><th scope="col">층</th><th scope="col" class="num">가격</th>
+      </tr></thead><tbody id="detail-body"></tbody></table>
+    </div>
+  </section>
+
+  <section aria-labelledby="dong-h">
+    <h2 id="dong-h">동별 흐름</h2>
+    <p class="hint">관심 동 전체 아파트 실거래 기준. 평당가는 전용면적 3.3㎡당 가격입니다.</p>
+    <div class="table-wrap">
+      <table class="dong"><thead><tr>
+        <th scope="col">동</th><th scope="col" class="num">최근 30일 거래</th><th scope="col" class="num">최근 90일 거래</th>
+        <th scope="col" class="num">90일 평당가</th><th scope="col" class="num">직전 90일 평당가</th><th scope="col" class="num">변화</th>
+      </tr></thead><tbody id="dong-body"></tbody></table>
+    </div>
+  </section>
+
+  <section aria-labelledby="wk-h" id="weekly-sec">
+    <h2 id="wk-h">구별 주간 아파트값</h2>
+    <p class="hint" id="wk-hint"></p>
+    <div class="table-wrap"><table class="dong"><thead><tr id="wk-head"></tr></thead><tbody id="wk-body"></tbody></table></div>
+  </section>
+
+  <details class="unmatched">
+    <summary>연결 안 된 단지명 보기</summary>
+    <p class="hint">관심 동에서 거래됐지만 관심 단지와 연결되지 않은 이름입니다. 관심 단지가 여기 보이면 <code>config/complexes.json</code>의 aliases에 이 이름을 추가하세요.</p>
+    <ul id="unmatched"></ul>
+  </details>
+</main>
+
+<footer>
+  출처: 국토교통부 아파트 매매 실거래가, 한국부동산원 주간 아파트가격동향(설정 시). 실거래는 계약 후 30일 안에 신고되므로 최근 거래는 늦게 반영됩니다. 해제된 거래는 취소선으로 표시합니다.
+</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
