@@ -38,15 +38,54 @@
         <span class="price${t.cancel ? " cancel" : ""}">${eok(t.price)}</span></li>`;
   let fresh = trades.filter((t) => t.complex && t.first_seen > firstRun && daysAgo(t.first_seen) <= 7);
   if (fresh.length) {
-    $("new-h").textContent = "새로 신고된 거래";
     $("new-hint").textContent = "최근 7일 동안 새로 공개된 관심 단지의 실거래입니다.";
   } else {
     fresh = live.filter((t) => t.complex && daysAgo(t.date) <= 14);
-    $("new-h").textContent = "최근 2주 계약된 거래";
     $("new-hint").textContent = "새로 공개된 거래가 쌓이기 전까지 계약일 기준 최근 14일 거래를 보여줍니다. 실거래는 계약 후 30일 안에 신고되므로 최근 거래일수록 아직 덜 반영돼 있습니다.";
   }
-  $("ledger").innerHTML = fresh.length ? fresh.slice(0, 30).map(row).join("")
-    : `<li><span class="empty">최근 14일 안에 계약된 관심 단지 거래가 아직 공개되지 않았습니다.</span></li>`;
+  // 새 거래: 지역·면적 탭 + 접기/펼치기 + 더보기
+  const regionOf = {}; for (const c of cx) regionOf[c.name] = c.region;
+  const allRegions = ["전체", ...new Set(cx.map((c) => c.region))];
+  let lReg = "전체", lSize = "전체", lOpen = true, lAll = false;
+  document.head.insertAdjacentHTML("beforeend", `<style>
+    .hero .ledger li{padding:9px 0;grid-template-columns:6.5rem 1fr auto}
+    .hero .ledger .price{font-size:1.15rem;font-weight:720}
+    .hero .ledger .what{font-size:.92rem}.hero .ledger .what span{font-size:.82rem}
+    .hero .ledger .when{font-size:.78rem}
+    .hero-head{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+    .tog{font:inherit;font-size:.82rem;border:1px solid var(--line);background:transparent;color:var(--ink);border-radius:6px;padding:3px 10px;cursor:pointer}
+    .more{display:block;width:100%;margin:6px 0 12px;font:inherit;font-size:.85rem;background:transparent;border:1px dashed var(--line);border-radius:6px;padding:6px;color:var(--muted);cursor:pointer}
+    .fbar{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 4px}
+  </style>`);
+  const hero = document.querySelector(".hero");
+  const hh = document.createElement("div"); hh.className = "hero-head";
+  $("new-h").replaceWith(hh); hh.appendChild(Object.assign(document.createElement("h2"), { id: "new-h", textContent: "" }));
+  hh.insertAdjacentHTML("beforeend", `<button type="button" class="tog" id="ltog" aria-expanded="true">접기</button>`);
+  $("new-hint").insertAdjacentHTML("afterend", `<div class="fbar" id="lchips"></div><div id="lbody"></div>`);
+  $("lbody").appendChild($("ledger"));
+  const chipRow = (label, opts, cur, key) => `<div class="chips" role="group" aria-label="${label}">` +
+    opts.map((o) => `<button type="button" aria-pressed="${o === cur}" data-${key}="${o}">${o}</button>`).join("") + `</div>`;
+  function renderLedger() {
+    $("new-h").textContent = freshMode ? "새로 신고된 거래" : "최근 2주 계약된 거래";
+    $("lchips").innerHTML = chipRow("지역", allRegions, lReg, "lr") + chipRow("전용면적", SIZES.map((s) => s[0]), lSize, "ls");
+    $("lchips").querySelectorAll("[data-lr]").forEach((b) => b.onclick = () => { lReg = b.dataset.lr; lAll = false; renderLedger(); });
+    $("lchips").querySelectorAll("[data-ls]").forEach((b) => b.onclick = () => { lSize = b.dataset.ls; lAll = false; renderLedger(); });
+    const fit = SIZES.find(([k]) => k === lSize)[1];
+    const list = fresh.filter((t) => (lReg === "전체" || regionOf[t.complex] === lReg) && fit(t.area));
+    const shown = lAll ? list : list.slice(0, 6);
+    $("ledger").innerHTML = shown.length ? shown.map(row).join("")
+      : `<li><span class="empty">조건에 맞는 거래가 없습니다.</span></li>`;
+    const old = $("lmore"); if (old) old.remove();
+    if (list.length > 6) $("ledger").insertAdjacentHTML("afterend",
+      `<button type="button" class="more" id="lmore">${lAll ? "접기" : `전체 ${list.length}건 보기`}</button>`);
+    if ($("lmore")) $("lmore").onclick = () => { lAll = !lAll; renderLedger(); };
+    $("lchips").hidden = $("lbody").hidden = $("new-hint").hidden = !lOpen;
+    $("ltog").textContent = lOpen ? "접기" : `펼치기 (${list.length}건)`;
+    $("ltog").setAttribute("aria-expanded", String(lOpen));
+  }
+  const freshMode = trades.some((t) => t.complex && t.first_seen > firstRun && daysAgo(t.first_seen) <= 7);
+  $("ltog").onclick = () => { lOpen = !lOpen; renderLedger(); };
+  renderLedger();
 
   // 관심 단지 표
   const regions = ["전체", ...new Set(cx.map((c) => c.region))];
@@ -197,7 +236,16 @@
     $("proj").innerHTML = `<p class="hint">아직 수집된 기사가 없습니다. config/news.json을 올린 뒤 Actions에서 Update data를 실행하세요.</p>`;
     $("nlist").innerHTML = `<li>아직 수집된 기사가 없습니다.</li>`;
   } else {
-    $("proj").innerHTML = news.projects.map((p) => {
+    const pRegions = ["전체", ...new Set(news.projects.flatMap((p) => (p.complexes || []).map((c) => regionOf[c]).filter(Boolean)))];
+    const pTypes = ["전체", ...new Set(news.projects.map((p) => p.type))];
+    let pReg = "전체", pType = "전체";
+    $("proj").insertAdjacentHTML("beforebegin", `<div class="fbar" id="pchips"></div>`);
+    const drawProj = () => {
+    $("pchips").innerHTML = chipRow("지역", pRegions, pReg, "pr") + chipRow("사업 유형", pTypes, pType, "pt");
+    $("pchips").querySelectorAll("[data-pr]").forEach((b) => b.onclick = () => { pReg = b.dataset.pr; drawProj(); });
+    $("pchips").querySelectorAll("[data-pt]").forEach((b) => b.onclick = () => { pType = b.dataset.pt; drawProj(); });
+    const plist = news.projects.filter((p) => (pReg === "전체" || (p.complexes || []).some((c) => regionOf[c] === pReg)) && (pType === "전체" || p.type === pType));
+    $("proj").innerHTML = plist.length ? plist.map((p) => {
       const fresh = (p.news || []).some((x) => x.date && daysAgo(x.date) <= 7);
       const ai = p.ai, cur = ai ? ai.step_now : p.step_now;
       const moved = ai && ai.changed_at && daysAgo(ai.changed_at) <= 14;
@@ -209,7 +257,9 @@
           <p class="pstage"><small>최초 확인 기준: ${esc(p.stage)} (${esc(p.stage_date)} · ${esc(p.stage_source)})</small></p>`
         : `<p class="pstage"><b>${esc(p.stage)}</b> <small>(${esc(p.stage_date)} · ${esc(p.stage_source)})</small></p>`}
         <ul class="plist">${(p.news || []).length ? nlist(p.news, 3) : "<li><span class='dd'></span>최근 90일 관련 기사 없음</li>"}</ul></article>`;
-    }).join("");
+    }).join("") : `<p class="hint">조건에 맞는 정비사업이 없습니다.</p>`;
+    };
+    drawProj();
     let tab = news.topics[0] ? news.topics[0].name : "";
     const drawTabs = () => {
       $("ntabs").innerHTML = news.topics.map((t) => `<button type="button" aria-pressed="${t.name === tab}" data-t="${esc(t.name)}">${esc(t.name)}</button>`).join("");
