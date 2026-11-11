@@ -1,8 +1,8 @@
 (async function () {
   const $ = (id) => document.getElementById(id);
   const get = async (f, d) => { try { const r = await fetch(`data/${f}?v=${Date.now()}`); return r.ok ? r.json() : d; } catch { return d; } };
-  const [cx, trades, meta, weekly] = await Promise.all([
-    get("complexes.json", []), get("trades.json", []), get("meta.json", {}), get("weekly.json", null)]);
+  const [cx, trades, meta, weekly, news] = await Promise.all([
+    get("complexes.json", []), get("trades.json", []), get("meta.json", {}), get("weekly.json", null), get("news.json", null)]);
 
   const eok = (man) => {               // 만원 → "13억 9,000"
     const e = Math.floor(man / 10000), r = man % 10000;
@@ -17,7 +17,8 @@
   document.head.insertAdjacentHTML("beforeend", `<style>
     .types{display:grid;grid-template-columns:auto auto auto;justify-content:end;gap:2px 10px;align-items:baseline}
     .types .t{color:var(--muted);font-size:.8rem}.types .d{color:var(--muted);font-size:.8rem}
-    .chips+.chips{margin-left:8px;padding-left:8px;border-left:1px solid var(--line)}</style>`);
+    .chips+.chips{margin-left:8px;padding-left:8px;border-left:1px solid var(--line)}
+    .ledger .empty{grid-column:1/-1}</style>`);
   const day = (s) => new Date(s + "T00:00:00+09:00");
   const today = new Date();
   const daysAgo = (s) => (today - day(s)) / 86400000;
@@ -25,21 +26,27 @@
 
   // 헤더
   $("updated").textContent = meta.updated_at
-    ? `마지막 갱신 ${meta.updated_at.replace("T", " ")} · 최근 ${meta.months}개월 실거래 ${trades.length.toLocaleString()}건`
+    ? `마지막 갱신 ${meta.updated_at.replace("T", " ").replace("+09:00", "")} · 최근 ${meta.months}개월 실거래 ${trades.length.toLocaleString()}건`
     : "아직 데이터가 없습니다. GitHub Actions에서 'Update data'를 한 번 실행하세요.";
 
-  // 새로 신고된 거래: 첫 수집일 이후 7일 안에 처음 보인 관심 단지 거래
+  // 새로 신고된 거래: 첫 수집일 이후 7일 안에 처음 보인 관심 단지 거래.
+  // 아직 없으면 계약일 기준 최근 14일 거래를 대신 보여준다.
   const firstRun = meta.first_run || "9999-12-31";
-  const fresh = trades.filter((t) => t.complex && t.first_seen > firstRun && daysAgo(t.first_seen) <= 7);
-  $("new-hint").textContent = meta.first_run
-    ? "최근 7일 동안 새로 공개된 관심 단지의 실거래입니다."
-    : "첫 수집 이후부터 새로 공개되는 거래가 여기에 쌓입니다.";
-  $("ledger").innerHTML = fresh.length
-    ? fresh.slice(0, 30).map((t) => `<li>
+  const row = (t) => `<li>
         <span class="when">계약 ${t.date.slice(5).replace("-", "/")}</span>
-        <span class="what"><b>${t.complex}</b><span>전용 ${t.area}㎡(${py(t.area)}평) · ${t.floor}층</span></span>
-        <span class="price${t.cancel ? " cancel" : ""}">${eok(t.price)}</span></li>`).join("")
-    : `<li><span class="empty">${meta.first_run ? "최근 7일 동안 새로 공개된 거래가 없습니다." : "첫 수집이 끝나면 다음 날부터 새 거래가 표시됩니다."}</span></li>`;
+        <span class="what"><b>${t.complex}</b><span>전용 ${t.area}㎡ · ${t.floor}층</span></span>
+        <span class="price${t.cancel ? " cancel" : ""}">${eok(t.price)}</span></li>`;
+  let fresh = trades.filter((t) => t.complex && t.first_seen > firstRun && daysAgo(t.first_seen) <= 7);
+  if (fresh.length) {
+    $("new-h").textContent = "새로 신고된 거래";
+    $("new-hint").textContent = "최근 7일 동안 새로 공개된 관심 단지의 실거래입니다.";
+  } else {
+    fresh = live.filter((t) => t.complex && daysAgo(t.date) <= 14);
+    $("new-h").textContent = "최근 2주 계약된 거래";
+    $("new-hint").textContent = "새로 공개된 거래가 쌓이기 전까지 계약일 기준 최근 14일 거래를 보여줍니다. 실거래는 계약 후 30일 안에 신고되므로 최근 거래일수록 아직 덜 반영돼 있습니다.";
+  }
+  $("ledger").innerHTML = fresh.length ? fresh.slice(0, 30).map(row).join("")
+    : `<li><span class="empty">최근 14일 안에 계약된 관심 단지 거래가 아직 공개되지 않았습니다.</span></li>`;
 
   // 관심 단지 표
   const regions = ["전체", ...new Set(cx.map((c) => c.region))];
@@ -54,6 +61,11 @@
       `<button type="button" aria-pressed="${k === size}" data-s="${k}">${k}</button>`).join("") + `</div>`;
     $("chips").querySelectorAll("button[data-r]").forEach((b) => b.onclick = () => { sel = b.dataset.r; renderChips(); renderTable(); });
     $("chips").querySelectorAll("button[data-s]").forEach((b) => b.onclick = () => { size = b.dataset.s; renderChips(); renderTable(); });
+  }
+  const projTag = {};
+  if (news) for (const p of news.projects) {
+    const n = p.ai ? p.ai.step_now : p.step_now;
+    for (const c of p.complexes || []) projTag[c] = `${p.type} · ${(p.steps || [])[n] || ""}`;
   }
   function renderTable() {
     const rows = cx.filter((c) => sel === "전체" || c.region === sel);
@@ -74,7 +86,7 @@
       return `<tr tabindex="0" data-n="${c.name}">
         <td><b>${c.name}</b><br><small>${c.zone}</small></td><td>${c.dong}</td>
         <td>${c.built || "-"}년<br><small>${(c.households || 0).toLocaleString()}세대</small></td>
-        <td><span class="tag">${(c.invest_class || c.age_class || "").split("(")[0]}</span></td>
+        <td><span class="tag">${projTag[c.name] || (c.invest_class || c.age_class || "").split("(")[0]}</span></td>
         <td class="num">${cell}</td>
         <td class="num">${n90}건</td><td class="num">${ask}</td></tr>`;
     }).join("");
@@ -144,6 +156,69 @@
   // 연결 안 된 단지명
   $("unmatched").innerHTML = (meta.unmatched || []).slice(0, 80).map((u) => `<li>${u.dong} ${u.apt} <small>(${u.count}건)</small></li>`).join("")
     || "<li>없음</li>";
+
+
+  // ── 정비사업 현황 + 지역 뉴스 ──
+  document.head.insertAdjacentHTML("beforeend", `<style>
+    .proj{display:grid;gap:12px}
+    .pcard{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:16px 18px}
+    .pcard h3{font-size:1.02rem;margin:0;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    .pcard .cx{color:var(--muted);font-size:.85rem;font-weight:400}
+    .pcard .tag{display:inline-block;font-size:.72rem;padding:1px 8px;border-radius:4px;background:var(--river-soft);font-weight:500}
+    .steps{display:flex;gap:4px;margin:12px 0 6px;flex-wrap:wrap}
+    .steps span{font-size:.72rem;padding:2px 8px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
+    .steps span.done{background:var(--river-soft);color:var(--ink);border-color:transparent}
+    .steps span.now{background:var(--river);color:var(--paper);border-color:var(--river);font-weight:600}
+    .pstage{font-size:.9rem;margin:2px 0}.pstage small{color:var(--muted)}
+    .plist{list-style:none;padding:0;margin:10px 0 0;border-top:1px dashed var(--line)}
+    .plist li{padding:6px 0;font-size:.88rem;display:flex;gap:10px;align-items:baseline}
+    .plist .dd{color:var(--muted);font-size:.78rem;white-space:nowrap;font-variant-numeric:tabular-nums}
+    .plist a{color:var(--ink);text-decoration:none}.plist a:hover{text-decoration:underline}
+    .plist .src{color:var(--muted);font-size:.78rem;white-space:nowrap}
+    .newb{font-size:.7rem;background:var(--up);color:#fff;border-radius:4px;padding:1px 6px}
+    .ntabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+    .ntabs button{font:inherit;font-size:.85rem;border:1px solid var(--line);background:transparent;color:var(--ink);padding:4px 12px;border-radius:999px;cursor:pointer}
+    .ntabs button[aria-pressed="true"]{background:var(--river);border-color:var(--river);color:var(--paper)}
+    .nbox{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:6px 18px}
+    .nbox .plist{border-top:0;margin:0}.nbox .plist li{border-bottom:1px solid var(--line);padding:9px 0}.nbox .plist li:last-child{border-bottom:0}
+  </style>`);
+  const esc = (t) => String(t || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const nlist = (items, n) => items.slice(0, n).map((x) => `<li><span class="dd">${x.date ? x.date.slice(5).replace("-", "/") : ""}</span>
+      <a href="${esc(x.link)}" target="_blank" rel="noopener">${esc(x.title)}</a>${x.date && daysAgo(x.date) <= 7 ? ' <span class="newb">새 기사</span>' : ""}
+      <span class="src">${esc(x.source)}</span></li>`).join("");
+  const anchor = document.querySelector("#dong-h").closest("section");
+  const projSec = document.createElement("section");
+  projSec.innerHTML = `<h2>정비사업 현황</h2><p class="hint">관련 기사는 하루 두 번 자동으로 모이고, 새 기사가 생기면 기사 제목의 '통과·인가·선정·착공' 같은 완료 신호를 찾아 현재 단계를 자동으로 다시 판정합니다. 단계 구분은 고정이며, 판정 근거와 사람이 처음 확인한 기준을 함께 보여줍니다. 자동 판정은 틀릴 수 있으니 중요한 결정 전에는 원문 기사와 조합 공지를 확인하세요.${news && news.updated_at ? ` 기사 수집 ${news.updated_at.replace("T", " ").replace("+09:00", "")}` : ""}</p><div class="proj" id="proj"></div>`;
+  anchor.before(projSec);
+  const newsSec = document.createElement("section");
+  newsSec.innerHTML = `<h2>지역 부동산 뉴스</h2><p class="hint">최근 2주 기사 제목과 링크입니다. 기사 원문은 각 언론사 사이트에서 확인하세요.</p><div class="ntabs" id="ntabs" role="group" aria-label="뉴스 분류"></div><div class="nbox"><ul class="plist" id="nlist"></ul></div>`;
+  document.querySelector("details.unmatched").before(newsSec);
+  if (!news) {
+    $("proj").innerHTML = `<p class="hint">아직 수집된 기사가 없습니다. config/news.json을 올린 뒤 Actions에서 Update data를 실행하세요.</p>`;
+    $("nlist").innerHTML = `<li>아직 수집된 기사가 없습니다.</li>`;
+  } else {
+    $("proj").innerHTML = news.projects.map((p) => {
+      const fresh = (p.news || []).some((x) => x.date && daysAgo(x.date) <= 7);
+      const ai = p.ai, cur = ai ? ai.step_now : p.step_now;
+      const moved = ai && ai.changed_at && daysAgo(ai.changed_at) <= 14;
+      return `<article class="pcard"><h3>${esc(p.name)} <span class="tag">${esc(p.type)}</span>${moved ? '<span class="newb">단계 변경</span>' : fresh ? '<span class="newb">새 기사</span>' : ""}
+        <span class="cx">${(p.complexes || []).map(esc).join(" · ")}</span></h3>
+        <div class="steps">${(p.steps || []).map((st, i) => `<span class="${i < cur ? "done" : i === cur ? "now" : ""}">${esc(st)}</span>`).join("")}</div>
+        ${ai ? `<p class="pstage"><b>${esc(ai.stage)}</b> <small>(자동 판정 ${esc(ai.judged_at)} · ${esc(ai.confidence)}${ai.stage_date ? " · 기준 " + esc(ai.stage_date) : ""})</small></p>
+          <p class="pstage"><small>근거: ${esc(ai.reason)}${moved ? ` · ${esc(p.steps[ai.changed_from] || "")} → ${esc(p.steps[ai.step_now] || "")}` : ""}</small></p>
+          <p class="pstage"><small>최초 확인 기준: ${esc(p.stage)} (${esc(p.stage_date)} · ${esc(p.stage_source)})</small></p>`
+        : `<p class="pstage"><b>${esc(p.stage)}</b> <small>(${esc(p.stage_date)} · ${esc(p.stage_source)})</small></p>`}
+        <ul class="plist">${(p.news || []).length ? nlist(p.news, 3) : "<li><span class='dd'></span>최근 90일 관련 기사 없음</li>"}</ul></article>`;
+    }).join("");
+    let tab = news.topics[0] ? news.topics[0].name : "";
+    const drawTabs = () => {
+      $("ntabs").innerHTML = news.topics.map((t) => `<button type="button" aria-pressed="${t.name === tab}" data-t="${esc(t.name)}">${esc(t.name)}</button>`).join("");
+      $("ntabs").querySelectorAll("button").forEach((b) => b.onclick = () => { tab = b.dataset.t; drawTabs(); });
+      const t = news.topics.find((x) => x.name === tab);
+      $("nlist").innerHTML = t && t.news.length ? nlist(t.news, 15) : "<li>최근 2주 기사가 없습니다.</li>";
+    };
+    drawTabs();
+  }
 
   renderChips(); renderTable();
 })();
