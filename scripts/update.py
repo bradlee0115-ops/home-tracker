@@ -185,12 +185,190 @@ def update_weekly(complexes):
         return {"error": f"주간 동향 수집 실패: {e}"}
 
 
+NEWS_CONFIG = os.path.join(ROOT, "config", "news.json")
+NEWS_RSS = "https://news.google.com/rss/search"
+
+
+def fetch_news(query, days=30, limit=8):
+    """구글 뉴스 RSS 검색. 제목·출처·링크·날짜만 저장한다."""
+    xml = http_get(NEWS_RSS, {"q": f"{query} when:{days}d", "hl": "ko", "gl": "KR", "ceid": "KR:ko"})
+    root = ET.fromstring(xml)
+    out = []
+    for it in root.findall(".//item")[:limit]:
+        title = pick(it, "title")
+        src = pick(it, "source")
+        if src and title.endswith(" - " + src):
+            title = title[: -len(" - " + src)]
+        pub = pick(it, "pubDate")
+        try:
+            d = dt.datetime.strptime(pub[:25].strip(), "%a, %d %b %Y %H:%M:%S").date().isoformat()
+        except Exception:
+            d = ""
+        out.append({"title": title, "source": src, "link": pick(it, "link"), "date": d})
+    return out
+
+
+def dedupe(items):
+    seen, out = set(), []
+    for x in sorted(items, key=lambda x: x["date"], reverse=True):
+        k = re.sub(r"\W", "", x["title"])[:40]
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(x)
+    return out
+
+
+ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
+CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "claude-sonnet-5-5")
+
+
+def ask_claude(key, prompt):
+    body = json.dumps({"model": CLAUDE_MODEL, "max_tokens": 800,
+                       "system": "너는 서울 정비사업(재건축·재개발·리모델링·모아타운) 진행 단계를 판정하는 보수적인 분석가다. 제공된 기사 제목과 기존 판정만 근거로 삼고, 근거가 없으면 단계를 올리지 않는다. 반드시 JSON 하나만 출력한다.",
+                       "messages": [{"role": "user", "content": prompt}]}).encode("utf-8")
+    req = urllib.request.Request(ANTHROPIC_URL, data=body, method="POST", headers={
+        "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"})
+    with urllib.request.urlopen(req, timeout=60) as r:
+        js = json.loads(r.read().decode("utf-8"))
+    text = "".join(c.get("text", "") for c in js.get("content", []) if c.get("type") == "text")
+    text = text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    return json.loads(text)
+
+
+# 단계별 '완료' 신호 키워드. 제목에 있으면 그 단계가 끝난 것으로 보고 다음 단계로 넘긴다.
+DONE_RULES = {
+    "조합설립": [r"조합\s*설립\s*인가", r"조합\s*창립총회", r"조합\s*출범"],
+    "시공사 선정": [r"시공사\s*(선정|확정)", r"수주", r"시공권\s*(확보|획득)"],
+    "안전진단": [r"안전진단\s*(통과|완료)", r"안전성\s*검토\s*(통과|완료)"],
+    "심의": [r"(건축|도시계획|통합|건축위원회)?\s*심의\s*(통과|가결|의결)", r"조건부\s*(통과|의결|가결)"],
+    "사업계획승인": [r"사업계획\s*승인", r"행위\s*허가"],
+    "이주·착공": [r"착공", r"이주\s*(시작|개시)"],
+    "입주": [r"준공", r"입주\s*(시작|개시)"],
+    "정비구역 지정": [r"정비구역\s*(지정|고시)"],
+    "추진위·조합설립": [r"조합\s*설립\s*인가", r"추진위(원회)?\s*(승인|구성)"],
+    "사업시행인가": [r"사업시행\s*(계획)?\s*인가"],
+    "관리처분인가": [r"관리처분\s*(계획)?\s*인가"],
+    "관리계획": [r"관리계획\s*(승인|고시|확정)"],
+}
+NOT_DONE = r"(추진|예정|준비|앞두|기대|목표|도전|전망|신청)"
+
+
+def judge_by_rules(p, base_step):
+    """무료 판정: 사업명 단어가 들어간 기사 제목에서 '완료' 키워드를 찾아 단계를 올린다(내리지는 않는다)."""
+    steps = p.get("steps", [])
+    best, ev = base_step, []
+    for x in p.get("news", []):
+        t = x["title"]
+        if not any(m in t for m in p.get("match", [])):
+            continue
+        for i, st in enumerate(steps):
+            pats = DONE_RULES.get(st, [])
+            for pat in pats:
+                mm = re.search(pat, t)
+                if mm and not re.search(NOT_DONE, t[mm.end(): mm.end() + 6]):
+                    nxt = min(i + 1, len(steps) - 1)
+                    if nxt > best:
+                        best, ev = nxt, [t]
+    return best, ev
+
+
+def judge_projects(projects):
+    """기사 목록이 바뀐 사업만 Claude에게 단계 판정을 맡긴다. 단계 구분(steps)은 고정."""
+    key = os.environ.get("ANTHROPIC_API_KEY")
+    store_path = os.path.join(DATA, "ai_stage.json")
+    store = load(store_path, {})
+    today = dt.datetime.now(KST).date().isoformat()
+    errors = []
+    for p in projects:
+        prev = store.get(p["name"])
+        sig = "|".join(sorted(x["title"] for x in p.get("news", [])))
+        if not key and (not prev or prev.get("sig") != sig):
+            steps = p.get("steps", [])
+            base_step = prev["step_now"] if prev else p.get("step_now", 0)
+            n, ev = judge_by_rules(p, base_step)
+            store[p["name"]] = {"step_now": n,
+                                "stage": (f"{steps[n-1]} 완료 기사 확인, 현재 '{steps[n]}' 단계로 추정" if n != base_step
+                                          else (prev or {}).get("stage") or p.get("stage")),
+                                "stage_date": today[:7] if n != base_step else (prev or {}).get("stage_date") or p.get("stage_date"),
+                                "confidence": "규칙 판정", "evidence": ev,
+                                "reason": ("기사 제목의 완료 키워드로 판정: " + ev[0]) if ev else "새 기사에 단계 완료 신호 없음, 기존 단계 유지",
+                                "judged_at": today, "sig": sig,
+                                "changed_from": base_step if n != base_step else (prev or {}).get("changed_from"),
+                                "changed_at": today if n != base_step else (prev or {}).get("changed_at")}
+        elif key and (not prev or prev.get("sig") != sig):
+            steps = p.get("steps", [])
+            base_step = prev["step_now"] if prev else p.get("step_now", 0)
+            prompt = (
+                f"사업명: {p['name']} ({p.get('type')})\n"
+                f"단계 구분(이 목록과 순서를 그대로 사용, 0부터 시작): {json.dumps(steps, ensure_ascii=False)}\n"
+                f"현재 기준 판정: step_now={base_step} ({steps[base_step] if steps and base_step < len(steps) else ''}), "
+                f"설명='{(prev or {}).get('stage') or p.get('stage')}', 기준일={(prev or {}).get('stage_date') or p.get('stage_date')}\n"
+                f"사람이 확인한 최초 기준: step_now={p.get('step_now')}, '{p.get('stage')}' ({p.get('stage_source')})\n"
+                "최근 기사(날짜 · 언론사 · 제목):\n" +
+                "\n".join(f"- {x['date']} · {x['source']} · {x['title']}" for x in p.get("news", [])) +
+                "\n\n정의: step_now는 지금 진행 중인 단계의 번호이며, 그 앞 단계들은 완료된 것으로 본다. 어떤 단계가 완료(통과·인가·선정)됐다면 step_now는 그다음 단계다.\n규칙: 1) 기사 제목에 해당 단계의 완료·인가·선정·통과가 명시된 경우에만 step_now를 올린다. "
+                "2) '추진', '예정', '준비', '기대'는 완료로 보지 않는다. 3) 사업 중단·해산·재건축 전환 등 명시된 경우만 낮추고 reason에 적는다. "
+                "4) 다른 단지·구역 기사는 무시한다. 5) 근거 기사가 없으면 기준 판정을 그대로 유지한다.\n"
+                '출력 형식: {"step_now": 정수, "stage": "현재 상태 한 문장(한국어)", "stage_date": "YYYY-MM 또는 빈 문자열", '
+                '"confidence": "높음|중간|낮음", "evidence": ["근거 기사 제목", ...], "reason": "판단 이유 한두 문장"}'
+            )
+            try:
+                r = ask_claude(key, prompt)
+                n = int(r.get("step_now", base_step))
+                n = max(0, min(n, len(steps) - 1)) if steps else 0
+                store[p["name"]] = {"step_now": n, "stage": r.get("stage", ""), "stage_date": r.get("stage_date", ""),
+                                    "confidence": r.get("confidence", ""), "evidence": r.get("evidence", [])[:3],
+                                    "reason": r.get("reason", ""), "judged_at": today, "sig": sig,
+                                    "changed_from": base_step if n != base_step else None,
+                                    "changed_at": today if n != base_step else (prev or {}).get("changed_at")}
+            except Exception as e:
+                errors.append(f"{p['name']}: {e}")
+            time.sleep(1)
+        if p["name"] in store:
+            p["ai"] = {k: v for k, v in store[p["name"]].items() if k != "sig"}
+    save(store_path, store)
+    return errors
+
+
+def update_news():
+    try:
+        cfg = json.load(open(NEWS_CONFIG, encoding="utf-8"))
+    except FileNotFoundError:
+        print("config/news.json이 없어 뉴스 수집을 건너뜁니다.")
+        return None
+    errors, projects, topics = [], [], []
+    for p in cfg.get("projects", []):
+        items = []
+        for q in p.get("keywords", []):
+            try:
+                items += fetch_news(q, days=90, limit=6)
+            except Exception as e:
+                errors.append(f"{q}: {e}")
+            time.sleep(0.5)
+        projects.append({k: v for k, v in p.items() if k != "keywords"} | {"news": dedupe(items)[:8]})
+    for t in cfg.get("topics", []):
+        items = []
+        for q in t.get("queries", []):
+            try:
+                items += fetch_news(q, days=14, limit=8)
+            except Exception as e:
+                errors.append(f"{q}: {e}")
+            time.sleep(0.5)
+        topics.append({"name": t["name"], "news": dedupe(items)[:15]})
+    errors += judge_projects(projects)
+    save(os.path.join(DATA, "news.json"), {"projects": projects, "topics": topics,
+         "updated_at": dt.datetime.now(KST).isoformat(timespec="minutes"), "errors": errors})
+    return {"news_errors": len(errors)}
+
+
 def main():
     os.makedirs(DATA, exist_ok=True)
     complexes = json.load(open(CONFIG, encoding="utf-8"))["complexes"]
     save(os.path.join(DATA, "complexes.json"), complexes)
     t = update_trades(complexes)
     w = update_weekly(complexes)
+    n = update_news()
     meta = load(os.path.join(DATA, "meta.json"), {})
     meta.setdefault("first_run", dt.datetime.now(KST).date().isoformat())
     meta.update({"updated_at": dt.datetime.now(KST).isoformat(timespec="minutes"), "months": MONTHS})
@@ -198,6 +376,8 @@ def main():
         meta.update(t)
     if w is not None:
         meta["weekly"] = w
+    if n is not None:
+        meta.update(n)
     save(os.path.join(DATA, "meta.json"), meta)
     print(json.dumps({k: v for k, v in meta.items() if k != "unmatched"}, ensure_ascii=False))
     if t and t["errors"] and t["trades"] == 0:
