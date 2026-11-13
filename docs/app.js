@@ -13,7 +13,30 @@
   const short = (man) => `${+(man / 10000).toFixed(2)}억`; // 162500 → 16.25억
   const SIZES = [["전체", () => true], ["59㎡ 이하", (a) => a < 60], ["60~85㎡", (a) => a >= 60 && a < 86], ["85㎡ 초과", (a) => a >= 86]];
   let size = "전체";
+  let unit = "㎡"; try { unit = localStorage.getItem("unit") || "㎡"; } catch (e) {}
+  // 네이버처럼 버튼 하나로 ㎡ ↔ 평 전환. 버튼에는 '누르면 바뀔 단위'를 보여준다.
+  const unitBtn = () => `<button type="button" class="unitbtn" data-u="toggle" aria-label="면적 단위 전환">↻ ${unit === "㎡" ? "평" : "㎡"}</button>`;
+  function toggleUnit() {
+    unit = unit === "㎡" ? "평" : "㎡"; try { localStorage.setItem("unit", unit); } catch (e) {}
+    renderChips(); renderTable(); renderLedger(); if (!$("detail").hidden && openName) showDetail(openName, true);
+  }
+  document.head.insertAdjacentHTML("beforeend", `<style>.unitbtn{font:inherit;font-size:.85rem;border:1px solid var(--line);background:var(--surface);color:var(--ink);padding:4px 12px;border-radius:8px;cursor:pointer;margin-left:8px}</style>`);
+  const cxBy = {}; for (const c of cx) cxBy[c.name] = c;
+  // 국토부 실거래는 전용면적만 있어, 네이버처럼 공급면적 평수로 바꾸려면 매물 목록의 전용→공급 대응표를 쓴다.
+  function supplyOf(name, area) {
+    const c = cxBy[name], k = String(Math.floor(area));
+    if (c && c.supply && c.supply[k]) return [c.supply[k], true];
+    let ratio = 1.33;                                        // 대응표가 없으면 같은 단지 비율, 그것도 없으면 일반적인 비율로 추정
+    if (c && c.supply) { const e = Object.entries(c.supply)[0]; if (e) ratio = e[1] / Number(e[0]); }
+    return [area * ratio, false];
+  }
+  function sizeLabel(name, area) {
+    if (unit === "㎡") return `${Math.floor(area)}㎡`;
+    const [s, ok] = supplyOf(name, area);
+    return `${ok ? "" : "약 "}${Math.round(s / 3.3058)}평`;
+  }
   document.querySelector(".cx thead th:nth-child(5)").textContent = "타입별 최근 실거래";
+  document.querySelector(".trades thead th:nth-child(2)").textContent = "면적";
   document.head.insertAdjacentHTML("beforeend", `<style>
     .types{display:grid;grid-template-columns:auto auto auto;justify-content:end;gap:2px 10px;align-items:baseline}
     .types .t{color:var(--muted);font-size:.8rem}.types .d{color:var(--muted);font-size:.8rem}
@@ -34,7 +57,7 @@
   const firstRun = meta.first_run || "9999-12-31";
   const row = (t) => `<li>
         <span class="when">계약 ${t.date.slice(5).replace("-", "/")}</span>
-        <span class="what"><b>${t.complex}</b><span>전용 ${t.area}㎡ · ${t.floor}층</span></span>
+        <span class="what"><b>${t.complex}</b><span>${unit === "평" ? `${sizeLabel(t.complex, t.area)} (전용 ${Math.floor(t.area)}㎡)` : `전용 ${t.area}㎡`} · ${t.floor}층</span></span>
         <span class="price${t.cancel ? " cancel" : ""}">${eok(t.price)}</span></li>`;
   let fresh = trades.filter((t) => t.complex && t.first_seen > firstRun && daysAgo(t.first_seen) <= 7);
   if (fresh.length) {
@@ -67,7 +90,8 @@
     opts.map((o) => `<button type="button" aria-pressed="${o === cur}" data-${key}="${o}">${o}</button>`).join("") + `</div>`;
   function renderLedger() {
     $("new-h").textContent = freshMode ? "새로 신고된 거래" : "최근 2주 계약된 거래";
-    $("lchips").innerHTML = chipRow("지역", allRegions, lReg, "lr") + chipRow("전용면적", SIZES.map((s) => s[0]), lSize, "ls");
+    $("lchips").innerHTML = chipRow("지역", allRegions, lReg, "lr") + chipRow("전용면적", SIZES.map((s) => s[0]), lSize, "ls") + unitBtn();
+    $("lchips").querySelector("button[data-u]").onclick = toggleUnit;
     $("lchips").querySelectorAll("[data-lr]").forEach((b) => b.onclick = () => { lReg = b.dataset.lr; lAll = false; renderLedger(); });
     $("lchips").querySelectorAll("[data-ls]").forEach((b) => b.onclick = () => { lSize = b.dataset.ls; lAll = false; renderLedger(); });
     const fit = SIZES.find(([k]) => k === lSize)[1];
@@ -97,9 +121,11 @@
     $("chips").innerHTML = `<div class="chips" role="group" aria-label="지역">` + regions.map((r) =>
       `<button type="button" aria-pressed="${r === sel}" data-r="${r}">${r}</button>`).join("") + `</div>`
       + `<div class="chips" role="group" aria-label="전용면적">` + SIZES.map(([k]) =>
-      `<button type="button" aria-pressed="${k === size}" data-s="${k}">${k}</button>`).join("") + `</div>`;
+      `<button type="button" aria-pressed="${k === size}" data-s="${k}">${k}</button>`).join("") + `</div>`
+ + unitBtn();
     $("chips").querySelectorAll("button[data-r]").forEach((b) => b.onclick = () => { sel = b.dataset.r; renderChips(); renderTable(); });
     $("chips").querySelectorAll("button[data-s]").forEach((b) => b.onclick = () => { size = b.dataset.s; renderChips(); renderTable(); });
+    $("chips").querySelectorAll("button[data-u]").forEach((b) => b.onclick = toggleUnit);
   }
   const projTag = {};
   if (news) for (const p of news.projects) {
@@ -118,7 +144,7 @@
       const shown = types.slice(0, 3);
       const cell = types.length
         ? `<div class="types">${shown.map((k) => { const t = latest[k];
-            return `<span class="t">${k}㎡</span><b>${short(t.price)}</b><span class="d">${t.date.slice(5).replace("-", "/")}</span>`; }).join("")}</div>`
+            return `<span class="t">${sizeLabel(c.name, t.area)}</span><b>${short(t.price)}</b><span class="d">${t.date.slice(5).replace("-", "/")}</span>`; }).join("")}</div>`
           + (types.length > 3 ? `<small>외 ${types.length - 3}개 타입</small>` : "")
         : "<small>최근 거래 없음</small>";
       const ask = c.min_ask ? (c.min_ask === c.max_ask ? `${c.min_ask}억` : `${c.min_ask}~${c.max_ask}억`) : "-";
@@ -138,22 +164,24 @@
   // 단지 상세 + 차트
   let chart;
   const palette = ["#1E6A73", "#C23B22", "#2F5BB7", "#8A6D1F", "#6B4C9A"];
-  function showDetail(name) {
+  let openName = null;
+  function showDetail(name, noScroll) {
+    openName = name;
     const c = cx.find((x) => x.name === name), ts = byCx[name] || [];
     $("detail").hidden = false;
     $("detail-h").textContent = name;
     $("detail-meta").textContent = `${c.gu} ${c.dong} · ${c.built}년 준공 · ${(c.households || 0).toLocaleString()}세대 · ${c.invest_class || ""}`;
     $("detail-body").innerHTML = ts.length ? ts.map((t) => `<tr class="${t.cancel ? "cancel" : ""}">
-      <td>${t.date}</td><td>${t.area}㎡ (${py(t.area)}평)</td><td>${t.floor}층</td><td class="num">${eok(t.price)}</td></tr>`).join("")
+      <td>${t.date}</td><td>${sizeLabel(name, t.area)}${unit === "평" ? ` <small>전용 ${t.area}㎡</small>` : ""}</td><td>${t.floor}층</td><td class="num">${eok(t.price)}</td></tr>`).join("")
       : `<tr><td colspan="4">이 기간에 연결된 실거래가 없습니다. 이름이 다르게 등록돼 있을 수 있으니 아래 '연결 안 된 단지명'을 확인하세요.</td></tr>`;
     const groups = {};
-    for (const t of ts.filter((t) => !t.cancel)) (groups[typ(t.area) + "㎡"] ||= []).push({ x: day(t.date).getTime(), y: t.price / 10000 });
+    for (const t of ts.filter((t) => !t.cancel)) (groups[sizeLabel(name, t.area)] ||= []).push({ x: day(t.date).getTime(), y: t.price / 10000 });
     if (chart) chart.destroy();
     if (window.Chart) {
       const css = getComputedStyle(document.documentElement);
       chart = new Chart($("chart"), {
         type: "scatter",
-        data: { datasets: Object.entries(groups).map(([k, v], i) => ({ label: `전용 ${k}`, data: v, backgroundColor: palette[i % palette.length], pointRadius: 5 })) },
+        data: { datasets: Object.entries(groups).map(([k, v], i) => ({ label: k, data: v, backgroundColor: palette[i % palette.length], pointRadius: 5 })) },
         options: {
           maintainAspectRatio: false,
           plugins: { legend: { labels: { color: css.getPropertyValue("--ink") } },
@@ -163,7 +191,7 @@
             y: { ticks: { color: css.getPropertyValue("--muted"), callback: (v) => v + "억" }, grid: { color: css.getPropertyValue("--line") } } } }
       });
     }
-    $("detail").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+    if (!noScroll) $("detail").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
   }
   $("detail-close").onclick = () => { $("detail").hidden = true; };
 
