@@ -45,12 +45,13 @@
     return c.min_ask ? { src: "excel", min: c.min_ask * 10000, max: c.max_ask * 10000, types: [] } : { src: "none" };
   }
   function askCell(c) {
-    const a = askOf(c);
+    const [lo, hi, a, cnt] = askFit(c);
     if (!a.min) return `-<br><small>15억↓ 매물 없음</small>`;
+    if (lo == null) return `-<br><small>이 면적 매물 없음</small>`;
     const sub = a.src === "excel" ? SRC.excel
       : a.src === "keep" ? `${md(a.date)} 값 유지`
-      : `${SRC[a.src]} ${md(a.date)} · ${a.n}건`;
-    return `${rng(a.min, a.max)}<br><small>${sub}</small>`;
+      : `${SRC[a.src]} ${md(a.date)} · ${cnt}건`;
+    return `${rng(lo, hi)}<br><small>${sub}</small>`;
   }
   function askTypes(c) {
     const a = askOf(c);
@@ -156,8 +157,47 @@
     const n = p.ai ? p.ai.step_now : p.step_now;
     for (const c of p.complexes || []) projTag[c] = `${p.type} · ${(p.steps || [])[n] || ""}`;
   }
+  // 표 정렬: 머리글(준공·최근 실거래·3개월 거래·호가)을 누를 때마다 오름차순 → 내림차순 → 기본 순서
+  let sortKey = null, sortDir = 1;
+  const SORTS = { 3: ["built", "준공·세대"], 5: ["deal", "타입별 최근 실거래"], 6: ["n90", "3개월 거래"], 7: ["ask", "호가(15억↓)"] };
+  function askFit(c) {                       // 면적 필터에 맞는 평형만의 호가 범위
+    const a = askOf(c), fit = SIZES.find(([k]) => k === size)[1];
+    if (size === "전체" || !a.types || !a.types.length) return a.min ? [a.min, a.max, a, a.n] : [null, null, a, 0];
+    const ts = a.types.filter((t) => fit(t.area));
+    return ts.length ? [Math.min(...ts.map((t) => t.min)), Math.max(...ts.map((t) => t.max)), a, ts.reduce((s, t) => s + t.n, 0)] : [null, null, a, 0];
+  }
+  function metric(c) {
+    const fit = SIZES.find(([k]) => k === size)[1];
+    const ts = (byCx[c.name] || []).filter((t) => !t.cancel && fit(t.area));
+    return { built: c.built || null, deal: ts.length ? ts[0].price : null,
+             n90: ts.filter((t) => daysAgo(t.date) <= 90).length, ask: askFit(c)[0] };
+  }
+  function renderSortHead() {
+    const ths = document.querySelectorAll(".cx thead th");
+    for (const [i, [key, label]] of Object.entries(SORTS)) {
+      const th = ths[i - 1]; if (!th) continue;
+      const on = sortKey === key, arrow = on ? (sortDir > 0 ? " ▲" : " ▼") : " ↕";
+      th.setAttribute("aria-sort", on ? (sortDir > 0 ? "ascending" : "descending") : "none");
+      th.innerHTML = `<button type="button" class="sortbtn${on ? " on" : ""}" data-k="${key}">${label}<span aria-hidden="true">${arrow}</span></button>`;
+    }
+    document.querySelectorAll(".cx thead .sortbtn").forEach((b) => b.onclick = () => {
+      const k = b.dataset.k;
+      if (sortKey !== k) { sortKey = k; sortDir = 1; } else if (sortDir > 0) sortDir = -1; else sortKey = null;
+      renderTable();
+    });
+  }
+  document.head.insertAdjacentHTML("beforeend", `<style>.sortbtn{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer;white-space:nowrap}.sortbtn span{opacity:.45;font-size:.8em}.sortbtn.on span{opacity:1;color:var(--accent,#1E6A73)}.sortbtn:focus-visible{outline:2px solid currentColor;outline-offset:2px}</style>`);
   function renderTable() {
-    const rows = cx.filter((c) => sel === "전체" || c.region === sel);
+    let rows = cx.filter((c) => sel === "전체" || c.region === sel);
+    if (sortKey) {
+      const m = new Map(rows.map((c) => [c.name, metric(c)[sortKey]]));
+      rows = [...rows].sort((a, b) => {
+        const x = m.get(a.name), y = m.get(b.name);
+        if (x == null && y == null) return 0; if (x == null) return 1; if (y == null) return -1;   // 값 없는 단지는 항상 맨 아래
+        return (x - y) * sortDir;
+      });
+    }
+    renderSortHead();
     $("cx-body").innerHTML = rows.map((c) => {
       const fit = SIZES.find(([k]) => k === size)[1];
       const ts = (byCx[c.name] || []).filter((t) => !t.cancel && fit(t.area));
@@ -326,4 +366,5 @@
  
   renderChips(); renderTable();
 })();
+ 
  
