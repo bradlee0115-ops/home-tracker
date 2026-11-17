@@ -261,8 +261,21 @@
     box.hidden = false;
     if (!map) {
       map = L.map(box, { scrollWheelZoom: false, attributionControl: true });
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-        { maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' }).addTo(map);
+      const osm = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
+      // 대중교통 지도(ÖPNVKarte): 지하철 노선·역이 잘 보임. 기본 지도는 OSM. 철도 노선은 겹쳐 보기 가능.
+      const bases = {
+        "대중교통 지도": L.tileLayer("https://tile.memomaps.de/tilegen/{z}/{x}/{y}.png",
+          { maxZoom: 18, attribution: `${osm} · <a href="https://memomaps.de/">memomaps.de</a>` }),
+        "기본 지도": L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: osm }),
+      };
+      const overlays = {
+        "지하철·철도 노선 강조": L.tileLayer("https://tiles.openrailwaymap.org/standard/{z}/{x}/{y}.png",
+          { maxZoom: 19, attribution: `${osm} · <a href="https://www.openrailwaymap.org/">OpenRailwayMap</a>` }),
+      };
+      let pick = "대중교통 지도"; try { pick = localStorage.getItem("mapBase") || pick; } catch (e) {}
+      (bases[pick] || bases["대중교통 지도"]).addTo(map);
+      L.control.layers(bases, overlays, { collapsed: true }).addTo(map);
+      map.on("baselayerchange", (e) => { try { localStorage.setItem("mapBase", e.name); } catch (er) {} });
       mapLayer = L.layerGroup().addTo(map);
     }
     mapLayer.clearLayers();
