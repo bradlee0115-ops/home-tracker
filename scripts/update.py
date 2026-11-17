@@ -1,7 +1,7 @@
 """
 국토교통부 아파트 매매 실거래가 + (선택) 한국부동산원 주간 아파트가격동향을 받아
 docs/data/*.json 으로 저장한다. GitHub Actions에서 매일 실행된다.
-
+ 
 필요한 환경변수 (GitHub Secrets)
   MOLIT_API_KEY   : 공공데이터포털 '국토교통부_아파트 매매 실거래가 상세 자료' 인증키(Decoding 키)
   REB_API_KEY     : (선택) 한국부동산원 R-ONE 오픈API 인증키
@@ -10,7 +10,7 @@ docs/data/*.json 으로 저장한다. GitHub Actions에서 매일 실행된다.
 import json, os, re, sys, time, datetime as dt
 import urllib.request, urllib.parse
 import xml.etree.ElementTree as ET
-
+ 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG = os.path.join(ROOT, "config", "complexes.json")
 DATA = os.path.join(ROOT, "docs", "data")
@@ -21,14 +21,14 @@ MOLIT_URL = os.environ.get(
 )
 REB_URL = os.environ.get("REB_URL", "https://www.reb.or.kr/r-one/openapi/SttsApiTblData.do")
 KST = dt.timezone(dt.timedelta(hours=9))
-
-
+ 
+ 
 def norm(s):
     s = re.sub(r"\(.*?\)", "", s or "")
     s = s.replace("아파트", "").replace(" ", "").replace("-", "")
     return s.strip()
-
-
+ 
+ 
 def http_get(url, params, tries=3):
     q = url + "?" + urllib.parse.urlencode(params, safe="%")
     last = None
@@ -40,16 +40,16 @@ def http_get(url, params, tries=3):
             last = e
             time.sleep(2 * (i + 1))
     raise last
-
-
+ 
+ 
 def pick(item, *names):
     for n in names:
         el = item.find(n)
         if el is not None and el.text is not None:
             return el.text.strip()
     return ""
-
-
+ 
+ 
 def fetch_month(key, lawd, ym):
     rows, page = [], 1
     while True:
@@ -78,8 +78,8 @@ def fetch_month(key, lawd, ym):
         if page * 1000 >= total or not items:
             return rows
         page += 1
-
-
+ 
+ 
 def months_back(n):
     t = dt.datetime.now(KST).date().replace(day=1)
     out = []
@@ -87,13 +87,13 @@ def months_back(n):
         out.append(t.strftime("%Y%m"))
         t = (t - dt.timedelta(days=1)).replace(day=1)
     return out
-
-
+ 
+ 
 def build_matcher(complexes):
     by_dong = {}
     for c in complexes:
         by_dong.setdefault((c["lawd"], c["dong"]), []).append(c)
-
+ 
     def match(lawd, dong, apt):
         cands = by_dong.get((lawd, dong), [])
         n = norm(apt)
@@ -104,21 +104,21 @@ def build_matcher(complexes):
                  if any(len(norm(a)) >= 3 and (norm(a) in n or n in norm(a)) for a in c["aliases"])]
         return loose[0]["name"] if len(loose) == 1 else None
     return match, by_dong
-
-
+ 
+ 
 def load(path, default):
     try:
         with open(path, encoding="utf-8") as f:
             return json.load(f)
     except FileNotFoundError:
         return default
-
-
+ 
+ 
 def save(path, obj):
     with open(path, "w", encoding="utf-8") as f:
         json.dump(obj, f, ensure_ascii=False, separators=(",", ":"))
-
-
+ 
+ 
 def update_trades(complexes):
     key = os.environ.get("MOLIT_API_KEY")
     if not key:
@@ -157,8 +157,8 @@ def update_trades(complexes):
     return {"trades": len(trades), "unmatched": sorted(
         [{"dong": k.split("|")[0], "apt": k.split("|")[1], "count": v} for k, v in unmatched.items()],
         key=lambda x: (-x["count"], x["dong"])), "errors": errors}
-
-
+ 
+ 
 def update_weekly(complexes):
     key, sid = os.environ.get("REB_API_KEY"), os.environ.get("REB_STATBL_ID")
     if not (key and sid):
@@ -183,12 +183,12 @@ def update_weekly(complexes):
         return {"regions": list(out)}
     except Exception as e:
         return {"error": f"주간 동향 수집 실패: {e}"}
-
-
+ 
+ 
 NEWS_CONFIG = os.path.join(ROOT, "config", "news.json")
 NEWS_RSS = "https://news.google.com/rss/search"
-
-
+ 
+ 
 def fetch_news(query, days=30, limit=8):
     """구글 뉴스 RSS 검색. 제목·출처·링크·날짜만 저장한다."""
     xml = http_get(NEWS_RSS, {"q": f"{query} when:{days}d", "hl": "ko", "gl": "KR", "ceid": "KR:ko"})
@@ -206,8 +206,8 @@ def fetch_news(query, days=30, limit=8):
             d = ""
         out.append({"title": title, "source": src, "link": pick(it, "link"), "date": d})
     return out
-
-
+ 
+ 
 def dedupe(items):
     seen, out = set(), []
     for x in sorted(items, key=lambda x: x["date"], reverse=True):
@@ -217,12 +217,12 @@ def dedupe(items):
         seen.add(k)
         out.append(x)
     return out
-
-
+ 
+ 
 ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "claude-sonnet-5-5")
-
-
+ 
+ 
 def ask_claude(key, prompt):
     body = json.dumps({"model": CLAUDE_MODEL, "max_tokens": 800,
                        "system": "너는 서울 정비사업(재건축·재개발·리모델링·모아타운) 진행 단계를 판정하는 보수적인 분석가다. 제공된 기사 제목과 기존 판정만 근거로 삼고, 근거가 없으면 단계를 올리지 않는다. 반드시 JSON 하나만 출력한다.",
@@ -234,8 +234,8 @@ def ask_claude(key, prompt):
     text = "".join(c.get("text", "") for c in js.get("content", []) if c.get("type") == "text")
     text = text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
     return json.loads(text)
-
-
+ 
+ 
 # 단계별 '완료' 신호 키워드. 제목에 있으면 그 단계가 끝난 것으로 보고 다음 단계로 넘긴다.
 DONE_RULES = {
     "조합설립": [r"조합\s*설립\s*인가", r"조합\s*창립총회", r"조합\s*출범"],
@@ -252,8 +252,8 @@ DONE_RULES = {
     "관리계획": [r"관리계획\s*(승인|고시|확정)"],
 }
 NOT_DONE = r"(추진|예정|준비|앞두|기대|목표|도전|전망|신청)"
-
-
+ 
+ 
 def judge_by_rules(p, base_step):
     """무료 판정: 사업명 단어가 들어간 기사 제목에서 '완료' 키워드를 찾아 단계를 올린다(내리지는 않는다)."""
     steps = p.get("steps", [])
@@ -271,8 +271,8 @@ def judge_by_rules(p, base_step):
                     if nxt > best:
                         best, ev = nxt, [t]
     return best, ev
-
-
+ 
+ 
 def judge_projects(projects):
     """기사 목록이 바뀐 사업만 Claude에게 단계 판정을 맡긴다. 단계 구분(steps)은 고정."""
     key = os.environ.get("ANTHROPIC_API_KEY")
@@ -329,8 +329,8 @@ def judge_projects(projects):
             p["ai"] = {k: v for k, v in store[p["name"]].items() if k != "sig"}
     save(store_path, store)
     return errors
-
-
+ 
+ 
 def update_news():
     try:
         cfg = json.load(open(NEWS_CONFIG, encoding="utf-8"))
@@ -360,8 +360,8 @@ def update_news():
     save(os.path.join(DATA, "news.json"), {"projects": projects, "topics": topics,
          "updated_at": dt.datetime.now(KST).isoformat(timespec="minutes"), "errors": errors})
     return {"news_errors": len(errors)}
-
-
+ 
+ 
 def main():
     os.makedirs(DATA, exist_ok=True)
     complexes = json.load(open(CONFIG, encoding="utf-8"))["complexes"]
@@ -369,6 +369,12 @@ def main():
     t = update_trades(complexes)
     w = update_weekly(complexes)
     n = update_news()
+    try:                                   # 호가 수집이 실패해도 실거래·뉴스 갱신은 그대로 진행
+        import asks
+        a = asks.update_asks(complexes)
+    except Exception as e:
+        print(f"호가 갱신 실패: {e}")
+        a = {"asks_error": str(e)[:200]}
     meta = load(os.path.join(DATA, "meta.json"), {})
     meta.setdefault("first_run", dt.datetime.now(KST).date().isoformat())
     meta.update({"updated_at": dt.datetime.now(KST).isoformat(timespec="minutes"), "months": MONTHS})
@@ -378,11 +384,13 @@ def main():
         meta["weekly"] = w
     if n is not None:
         meta.update(n)
+    meta.update(a)
     save(os.path.join(DATA, "meta.json"), meta)
     print(json.dumps({k: v for k, v in meta.items() if k != "unmatched"}, ensure_ascii=False))
     if t and t["errors"] and t["trades"] == 0:
         sys.exit(1)
-
-
+ 
+ 
 if __name__ == "__main__":
     main()
+ 
