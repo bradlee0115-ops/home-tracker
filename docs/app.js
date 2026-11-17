@@ -260,7 +260,7 @@
     if (!window.L || !c.lat) { box.hidden = true; return; }
     box.hidden = false;
     if (!map) {
-      map = L.map(box, { scrollWheelZoom: false, attributionControl: true });
+      map = L.map(box, { scrollWheelZoom: true, wheelPxPerZoomLevel: 90, attributionControl: true });
       const osm = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
       // 대중교통 지도(ÖPNVKarte): 지하철 노선·역이 잘 보임. 기본 지도는 OSM. 철도 노선은 겹쳐 보기 가능.
       const bases = {
