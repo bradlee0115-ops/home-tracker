@@ -252,6 +252,7 @@ DONE_RULES = {
     "관리계획": [r"관리계획\s*(승인|고시|확정)"],
 }
 NOT_DONE = r"(추진|예정|준비|앞두|기대|목표|도전|전망|신청)"
+NOT_YET = r"(내년|연내|올해|상반기|하반기|앞두|앞둔|향후|조만간)"   # '내년 착공'처럼 미래 시점이 앞에 붙은 경우
  
  
 def judge_by_rules(p, base_step):
@@ -266,7 +267,8 @@ def judge_by_rules(p, base_step):
             pats = DONE_RULES.get(st, [])
             for pat in pats:
                 mm = re.search(pat, t)
-                if mm and not re.search(NOT_DONE, t[mm.end(): mm.end() + 6]):
+                if mm and not re.search(NOT_DONE, t[mm.end(): mm.end() + 6]) \
+                        and not re.search(NOT_YET, t[max(0, mm.start() - 6): mm.start()]):
                     nxt = min(i + 1, len(steps) - 1)
                     if nxt > best:
                         best, ev = nxt, [t]

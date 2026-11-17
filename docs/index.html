@@ -6,6 +6,7 @@
 <title>15억 이하 실거래 기록</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏠</text></svg>">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -44,7 +45,13 @@
       <button type="button" class="close" id="detail-close">닫기</button>
     </div>
     <p class="meta" id="detail-meta"></p>
-    <div class="chart-box"><canvas id="chart" aria-label="실거래 가격 추이"></canvas></div>
+    <div class="dgrid">
+      <div class="chart-box"><canvas id="chart" aria-label="실거래 가격 추이"></canvas></div>
+      <div class="map-col">
+        <div id="map" class="map" role="region" aria-label="단지 위치 지도"></div>
+        <p class="maplinks" id="maplinks"></p>
+      </div>
+    </div>
     <div class="table-wrap">
       <table class="trades"><thead><tr>
         <th scope="col">계약일</th><th scope="col">전용</th><th scope="col">층</th><th scope="col" class="num">가격</th>
@@ -81,6 +88,7 @@
 </footer>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

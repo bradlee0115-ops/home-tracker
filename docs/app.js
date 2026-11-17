@@ -198,6 +198,7 @@
       });
     }
     renderSortHead();
+    parkDetail();
     $("cx-body").innerHTML = rows.map((c) => {
       const fit = SIZES.find(([k]) => k === size)[1];
       const ts = (byCx[c.name] || []).filter((t) => !t.cancel && fit(t.area));
@@ -220,18 +221,66 @@
         <td class="num">${n90}건</td><td class="num">${ask}</td></tr>`;
     }).join("");
     $("cx-body").querySelectorAll("tr").forEach((tr) => {
-      const open = () => showDetail(tr.dataset.n);
+      const open = () => (openName === tr.dataset.n && !$("detail").hidden ? closeDetail() : showDetail(tr.dataset.n));
       tr.onclick = open; tr.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } };
     });
+    if (openName && !$("detail").hidden) {     // 정렬·필터 후에도 열려 있던 단지 아래에 다시 붙임(목록에서 빠졌으면 닫음)
+      if (mountDetail(openName)) { if (map) setTimeout(() => map.invalidateSize(), 0); } else closeDetail();
+    }
   }
  
   // 단지 상세 + 차트
   let chart;
   const palette = ["#1E6A73", "#C23B22", "#2F5BB7", "#8A6D1F", "#6B4C9A"];
   let openName = null;
+  // 상세 패널은 누른 행 바로 아래 펼침 행(tr.detail-row) 안으로 옮겨 보여준다.
+  const detailHome = document.createElement("div"); detailHome.hidden = true;
+  $("detail").before(detailHome);
+  function parkDetail() {                      // 표를 다시 그리기 전에 상세 패널을 원래 자리로 되돌림
+    const d = $("detail"); detailHome.after(d);
+    document.querySelectorAll("tr.detail-row").forEach((r) => r.remove());
+    document.querySelectorAll("#cx-body tr.open").forEach((r) => r.classList.remove("open"));
+  }
+  function mountDetail(name) {                 // 해당 단지 행 아래에 붙임. 행이 없으면(필터로 숨김) 원래 자리에 표시
+    const row = [...document.querySelectorAll("#cx-body tr[data-n]")].find((r) => r.dataset.n === name);
+    if (!row) return null;
+    const tr = document.createElement("tr"); tr.className = "detail-row";
+    const td = document.createElement("td"); td.colSpan = row.cells.length;
+    tr.appendChild(td); row.after(tr); td.appendChild($("detail")); row.classList.add("open");
+    return row;
+  }
+  // 지도: Leaflet + OpenStreetMap(키 불필요). 선택 단지는 큰 표시, 나머지 관심 단지는 작은 점.
+  let map, mapLayer;
+  function drawMap(c) {
+    const box = $("map"), links = $("maplinks");
+    const q = encodeURIComponent(`${c.gu} ${c.dong} ${c.name.replace(/\(.*?\)/, "")} 아파트`);
+    links.innerHTML = `<a href="https://map.naver.com/p/search/${q}" target="_blank" rel="noopener">네이버 지도 ↗</a>`
+      + (c.lat ? `<a href="https://map.kakao.com/link/map/${encodeURIComponent(c.name)},${c.lat},${c.lng}" target="_blank" rel="noopener">카카오맵 ↗</a>` : "")
+      + `<a href="https://new.land.naver.com/search?ms=${c.lat || ""},${c.lng || ""},17&sk=${q}" target="_blank" rel="noopener">네이버 부동산 ↗</a>`;
+    if (!window.L || !c.lat) { box.hidden = true; return; }
+    box.hidden = false;
+    if (!map) {
+      map = L.map(box, { scrollWheelZoom: false, attributionControl: true });
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+        { maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' }).addTo(map);
+      mapLayer = L.layerGroup().addTo(map);
+    }
+    mapLayer.clearLayers();
+    for (const o of cx) {
+      if (!o.lat || o.name === c.name) continue;
+      L.circleMarker([o.lat, o.lng], { radius: 5, color: "#5B6875", weight: 1, fillColor: "#5B6875", fillOpacity: .55 })
+        .bindTooltip(o.name, { className: "cxtip", direction: "top" })
+        .on("click", () => showDetail(o.name)).addTo(mapLayer);
+    }
+    L.circleMarker([c.lat, c.lng], { radius: 10, color: "#fff", weight: 2, fillColor: "#C23B22", fillOpacity: 1 })
+      .bindTooltip(c.name, { permanent: true, className: "cxtip", direction: "top", offset: [0, -8] }).addTo(mapLayer);
+    setTimeout(() => { map.invalidateSize(); map.setView([c.lat, c.lng], 16); }, 0);
+  }
   function showDetail(name, noScroll) {
     openName = name;
     const c = cx.find((x) => x.name === name), ts = byCx[name] || [];
+    parkDetail();
+    const row = mountDetail(name);
     $("detail").hidden = false;
     $("detail-h").textContent = name;
     $("detail-meta").textContent = `${c.gu} ${c.dong} · ${c.built}년 준공 · ${(c.households || 0).toLocaleString()}세대 · ${c.invest_class || ""}`;
@@ -257,9 +306,11 @@
             y: { ticks: { color: css.getPropertyValue("--muted"), callback: (v) => v + "억" }, grid: { color: css.getPropertyValue("--line") } } } }
       });
     }
-    if (!noScroll) $("detail").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+    drawMap(c);
+    if (!noScroll) (row || $("detail")).scrollIntoView({ block: "start", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
   }
-  $("detail-close").onclick = () => { $("detail").hidden = true; };
+  function closeDetail() { openName = null; $("detail").hidden = true; parkDetail(); }
+  $("detail-close").onclick = closeDetail;
  
   // 동별 흐름
   const dongs = [...new Set(cx.map((c) => c.dong))];
