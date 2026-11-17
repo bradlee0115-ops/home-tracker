@@ -273,10 +273,11 @@
       if (subway && subway.lines && subway.lines.length) {
         map.createPane("lines"); map.getPane("lines").style.zIndex = 390;
         const g = L.layerGroup();
-        for (const ln of subway.lines) {
+        const lname = (n) => n.split(":")[0].replace(/^(서울 지하철|수도권 전철|서울 경전철|수도권 광역급행철도)\s*/, "");
+        for (const ln of subway.lines.filter((l) => !/ITX|직통열차/.test(l.name))) {
           L.polyline(ln.paths, { pane: "lines", color: "#fff", weight: 7, opacity: .9, interactive: false }).addTo(g);
           L.polyline(ln.paths, { pane: "lines", color: ln.colour, weight: 4, opacity: .95 })
-            .bindTooltip(ln.name, { sticky: true, className: "cxtip" }).addTo(g);
+            .bindTooltip(lname(ln.name), { sticky: true, className: "cxtip" }).addTo(g);
         }
         const st = L.layerGroup();
         for (const s of subway.stations || []) {
