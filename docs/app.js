@@ -1,8 +1,8 @@
 (async function () {
   const $ = (id) => document.getElementById(id);
   const get = async (f, d) => { try { const r = await fetch(`data/${f}?v=${Date.now()}`); return r.ok ? r.json() : d; } catch { return d; } };
-  const [cx, trades, meta, weekly, news, asks] = await Promise.all([
-    get("complexes.json", []), get("trades.json", []), get("meta.json", {}), get("weekly.json", null), get("news.json", null), get("asks.json", null)]);
+  const [cx, trades, meta, weekly, news, asks, subway] = await Promise.all([
+    get("complexes.json", []), get("trades.json", []), get("meta.json", {}), get("weekly.json", null), get("news.json", null), get("asks.json", null), get("subway.json", null)]);
  
   const eok = (man) => {               // 만원 → "13억 9,000"
     const e = Math.floor(man / 10000), r = man % 10000;
@@ -264,18 +264,38 @@
       const osm = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
       // 대중교통 지도(ÖPNVKarte): 지하철 노선·역이 잘 보임. 기본 지도는 OSM. 철도 노선은 겹쳐 보기 가능.
       const bases = {
+        "기본 지도": L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: osm }),
         "대중교통 지도": L.tileLayer("https://tile.memomaps.de/tilegen/{z}/{x}/{y}.png",
           { maxZoom: 18, attribution: `${osm} · <a href="https://memomaps.de/">memomaps.de</a>` }),
-        "기본 지도": L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: osm }),
       };
-      const overlays = {
-        "지하철·철도 노선 강조": L.tileLayer("https://tiles.openrailwaymap.org/standard/{z}/{x}/{y}.png",
-          { maxZoom: 19, attribution: `${osm} · <a href="https://www.openrailwaymap.org/">OpenRailwayMap</a>` }),
-      };
-      let pick = "대중교통 지도"; try { pick = localStorage.getItem("mapBase") || pick; } catch (e) {}
-      (bases[pick] || bases["대중교통 지도"]).addTo(map);
+      const overlays = {};
+      // 호선 색 노선도: docs/data/subway.json(OSM 노선 정보의 공식 색). 없으면 OpenRailwayMap 타일로 대체.
+      if (subway && subway.lines && subway.lines.length) {
+        map.createPane("lines"); map.getPane("lines").style.zIndex = 390;
+        const g = L.layerGroup();
+        for (const ln of subway.lines) {
+          L.polyline(ln.paths, { pane: "lines", color: "#fff", weight: 7, opacity: .9, interactive: false }).addTo(g);
+          L.polyline(ln.paths, { pane: "lines", color: ln.colour, weight: 4, opacity: .95 })
+            .bindTooltip(ln.name, { sticky: true, className: "cxtip" }).addTo(g);
+        }
+        const st = L.layerGroup();
+        for (const s of subway.stations || []) {
+          L.circleMarker([s.lat, s.lng], { pane: "lines", radius: 4, color: "#17212B", weight: 1.5, fillColor: "#fff", fillOpacity: 1 })
+            .bindTooltip(s.name.replace(/역$/, "") + "역", { permanent: true, direction: "right", offset: [6, 0], className: "sttip" }).addTo(st);
+        }
+        const both = L.layerGroup([g, st]);
+        overlays["지하철 노선(호선 색)"] = both;
+        const syncLabels = () => map.getContainer().classList.toggle("lowzoom", map.getZoom() < 15);
+        map.on("zoomend", syncLabels); setTimeout(syncLabels, 0);
+      } else {
+        overlays["지하철·철도 노선 강조"] = L.tileLayer("https://tiles.openrailwaymap.org/standard/{z}/{x}/{y}.png",
+          { maxZoom: 19, attribution: `${osm} · <a href="https://www.openrailwaymap.org/">OpenRailwayMap</a>` });
+      }
+      let pick = "기본 지도"; try { pick = localStorage.getItem("mapBase2") || pick; } catch (e) {}
+      (bases[pick] || bases["기본 지도"]).addTo(map);
+      Object.values(overlays)[0].addTo(map);         // 노선은 기본으로 켜 둠
       L.control.layers(bases, overlays, { collapsed: true }).addTo(map);
-      map.on("baselayerchange", (e) => { try { localStorage.setItem("mapBase", e.name); } catch (er) {} });
+      map.on("baselayerchange", (e) => { try { localStorage.setItem("mapBase2", e.name); } catch (er) {} });
       mapLayer = L.layerGroup().addTo(map);
     }
     mapLayer.clearLayers();

@@ -377,6 +377,11 @@ def main():
     except Exception as e:
         print(f"호가 갱신 실패: {e}")
         a = {"asks_error": str(e)[:200]}
+    try:                                   # 지하철 노선(한 달에 한 번)
+        import subway
+        a.update(subway.update_subway(complexes))
+    except Exception as e:
+        print(f"지하철 노선 갱신 실패: {e}")
     meta = load(os.path.join(DATA, "meta.json"), {})
     meta.setdefault("first_run", dt.datetime.now(KST).date().isoformat())
     meta.update({"updated_at": dt.datetime.now(KST).isoformat(timespec="minutes"), "months": MONTHS})

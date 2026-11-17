@@ -62,9 +62,9 @@ def asil_page(code, page):
          "gps_y_max": "", "gps_y_min": "", "bdong_cd": code, "asil_bldcode": "", "next_flag": "", "now_page": str(page)}
     req = urllib.request.Request(ASIL_URL + "?" + urllib.parse.urlencode(q), headers=UA)
     last = None
-    for i in range(3):
+    for i in range(2):
         try:
-            with urllib.request.urlopen(req, timeout=30) as r:
+            with urllib.request.urlopen(req, timeout=15) as r:
                 return json.loads(r.read().decode("utf-8")).get("list_result") or []
         except Exception as e:
             last = e
@@ -74,7 +74,11 @@ def asil_page(code, page):
  
 def fetch_asil(codes):
     rows, ok, fail = [], [], []
+    streak = 0
     for code in codes:
+        if streak >= 2 and not ok:   # 처음부터 연속 2곳 실패 = 아실 접속 불가로 보고 나머지는 건너뜀(직전값 유지)
+            fail.append(code)
+            continue
         seen = set()
         try:
             for page in range(1, 151):
@@ -88,9 +92,11 @@ def fetch_asil(codes):
                     rows.append(x)
                 time.sleep(0.3)
             ok.append(code)
+            streak = 0
         except Exception as e:
             print(f"아실 {code} 실패: {e}")
             fail.append(code)
+            streak += 1
     return rows, ok, fail
  
  
