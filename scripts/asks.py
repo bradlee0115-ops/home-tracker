@@ -47,7 +47,7 @@ def name_match(name, c):
     if n in keys:
         return 2
     for k in keys:
-        if len(k) >= 3 and (k in n or n in k):
+        if len(k) >= 3 and len(n) >= 3 and (k in n or n in k):
             rest = n.replace(k, "") if k in n else k.replace(n, "")
             if not re.search(r"\d", rest):      # '경남아너스빌' vs '경남아너스빌2차' 같은 다른 단지 방지
                 return 1
@@ -169,8 +169,9 @@ def parse_naver(text, complexes):
             continue
         parts = [parse_eok(p) for p in m.group(1).replace("변동상승내역 보기", "").replace("변동하락내역 보기", "").split("~")]
         parts = [p for p in parts if p]
-        if not parts:
+        if not parts or parts[0] > MAX_PRICE:
             continue
+        parts = [min(p, MAX_PRICE) for p in parts]      # '15억~17억' → 15억까지만(15억 이하 기준)
         supply, ex = float(am.group(1)), float(am.group(2))
         fl = re.search(r"\)\s*([^/\s]+)/(\d+)층", nxt)
         dm = None
@@ -181,15 +182,22 @@ def parse_naver(text, complexes):
         if dm:
             dates.append(dt.date(*map(int, dm.groups())))
         pool = [c for c in complexes if region is None or c["region"] == region]
-        cands = [(name_match(nm, c), c) for c in pool]
+        if "(" in nm:   # '성원(650)'·'현대(74-30)'처럼 괄호로 구분되는 단지는 별칭이 정확히 같을 때만 연결
+            cands = [(2 if nm in set(c.get("aliases", [])) | {c["name"]} else 0, c) for c in pool]
+        else:
+            cands = [(2 if name_match(nm, c) == 2 else 0, c) for c in pool]   # 네이버 이름은 정확히 일치할 때만
         top = max((s for s, _ in cands), default=0)
         best = [c for s, c in cands if s and s == top]
         k = str(math.floor(ex))
-        sup_ok = lambda c: bool(c.get("supply", {}).get(k)) and abs(c["supply"][k] - supply) <= 1.5
+        sup_ok = lambda c: bool(c.get("supply", {}).get(k)) and abs(c["supply"][k] - supply) <= 3.5
         if len(best) > 1 or region is None:
             # 이름이 같은 단지(예: 성원 2곳, 사당·양평 경남아너스빌)는 공급면적 대응표로 구분.
             # 지역 머리말('# 당산')이 없으면 오매칭을 막기 위해 항상 이 확인을 거친다.
             best = [c for c in best if sup_ok(c)]
+            if len(best) > 1:   # 둘 다 허용 범위면 공급면적이 더 가까운 단지
+                gap = {c["name"]: abs(c["supply"][k] - supply) for c in best}
+                m = min(gap.values())
+                best = [c for c in best if gap[c["name"]] == m]
         if len(best) != 1:
             skipped[nm] = skipped.get(nm, 0) + 1
             continue
@@ -260,4 +268,5 @@ def update_asks(complexes):
         json.dump(out, f, ensure_ascii=False, separators=(",", ":"))
     print(f"호가: 아실 {len(rows)}건(실패 코드 {len(fail)}), 네이버 {out['naver']['rows']}건 기준일 {out['naver']['date']}")
     return {"asks_asil_ok": not fail, "asks_asil_rows": len(rows)}
+ 
  
