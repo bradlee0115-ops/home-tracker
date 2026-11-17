@@ -1,9 +1,9 @@
 (async function () {
   const $ = (id) => document.getElementById(id);
   const get = async (f, d) => { try { const r = await fetch(`data/${f}?v=${Date.now()}`); return r.ok ? r.json() : d; } catch { return d; } };
-  const [cx, trades, meta, weekly, news] = await Promise.all([
-    get("complexes.json", []), get("trades.json", []), get("meta.json", {}), get("weekly.json", null), get("news.json", null)]);
-
+  const [cx, trades, meta, weekly, news, asks] = await Promise.all([
+    get("complexes.json", []), get("trades.json", []), get("meta.json", {}), get("weekly.json", null), get("news.json", null), get("asks.json", null)]);
+ 
   const eok = (man) => {               // 만원 → "13억 9,000"
     const e = Math.floor(man / 10000), r = man % 10000;
     return e ? `${e}억${r ? " " + r.toLocaleString("ko-KR") : ""}` : `${r.toLocaleString("ko-KR")}만`;
@@ -35,6 +35,30 @@
     const [s, ok] = supplyOf(name, area);
     return `${ok ? "" : "약 "}${Math.round(s / 3.3058)}평`;
   }
+  // 호가: docs/data/asks.json (아실 자동 수집 + 네이버 붙여넣기 보강). 없으면 기존 엑셀 값.
+  const SRC = { asil: "아실", naver: "네이버", keep: "직전값", excel: "기존 엑셀", none: "" };
+  const md = (d) => d ? d.slice(5).replace("-", "/") : "";
+  const rng = (a, b) => a === b ? short(a) : `${+(a / 10000).toFixed(2)}~${short(b)}`;
+  function askOf(c) {
+    const a = asks && asks.complexes && asks.complexes[c.name];
+    if (a) return a;
+    return c.min_ask ? { src: "excel", min: c.min_ask * 10000, max: c.max_ask * 10000, types: [] } : { src: "none" };
+  }
+  function askCell(c) {
+    const a = askOf(c);
+    if (!a.min) return `-<br><small>15억↓ 매물 없음</small>`;
+    const sub = a.src === "excel" ? SRC.excel
+      : a.src === "keep" ? `${md(a.date)} 값 유지`
+      : `${SRC[a.src]} ${md(a.date)} · ${a.n}건`;
+    return `${rng(a.min, a.max)}<br><small>${sub}</small>`;
+  }
+  function askTypes(c) {
+    const a = askOf(c);
+    if (!a.types || !a.types.length) return a.src === "excel" ? `호가(기존 엑셀): ${rng(a.min, a.max)}` : "호가: 15억 이하 매물 없음";
+    const lbl = a.src === "keep" ? `직전값 ${md(a.date)}` : `${SRC[a.src]} ${md(a.date)}`;
+    return `호가(${lbl}, 15억 이하): ` + a.types.map((t) => `${sizeLabel(c.name, t.area)} ${rng(t.min, t.max)}(${t.n})`).join(" · ");
+  }
+  document.querySelector(".cx thead th:nth-child(7)").textContent = "호가(15억↓)";
   document.querySelector(".cx thead th:nth-child(5)").textContent = "타입별 최근 실거래";
   document.querySelector(".trades thead th:nth-child(2)").textContent = "면적";
   document.head.insertAdjacentHTML("beforeend", `<style>
@@ -46,12 +70,12 @@
   const today = new Date();
   const daysAgo = (s) => (today - day(s)) / 86400000;
   const live = trades.filter((t) => !t.cancel);
-
+ 
   // 헤더
   $("updated").textContent = meta.updated_at
-    ? `마지막 갱신 ${meta.updated_at.replace("T", " ").replace("+09:00", "")} · 최근 ${meta.months}개월 실거래 ${trades.length.toLocaleString()}건`
+    ? `마지막 갱신 ${meta.updated_at.replace("T", " ").replace("+09:00", "")} · 최근 ${meta.months}개월 실거래 ${trades.length.toLocaleString()}건` + (asks ? (asks.asil && asks.asil.ok ? ` · 호가 아실 ${asks.asil.rows.toLocaleString()}건 수집` : ` · 호가 아실 수집 실패(직전값·엑셀 표시)`) + (asks.naver && asks.naver.fresh ? ` · 네이버 붙여넣기 ${asks.naver.date.slice(5).replace("-", "/")}` : "") : "")
     : "아직 데이터가 없습니다. GitHub Actions에서 'Update data'를 한 번 실행하세요.";
-
+ 
   // 새로 신고된 거래: 첫 수집일 이후 7일 안에 처음 보인 관심 단지 거래.
   // 아직 없으면 계약일 기준 최근 14일 거래를 대신 보여준다.
   const firstRun = meta.first_run || "9999-12-31";
@@ -110,13 +134,13 @@
   const freshMode = trades.some((t) => t.complex && t.first_seen > firstRun && daysAgo(t.first_seen) <= 7);
   $("ltog").onclick = () => { lOpen = !lOpen; renderLedger(); };
   renderLedger();
-
+ 
   // 관심 단지 표
   const regions = ["전체", ...new Set(cx.map((c) => c.region))];
   let sel = "전체";
   const byCx = {};
   for (const t of trades) if (t.complex) (byCx[t.complex] ||= []).push(t);
-
+ 
   function renderChips() {
     $("chips").innerHTML = `<div class="chips" role="group" aria-label="지역">` + regions.map((r) =>
       `<button type="button" aria-pressed="${r === sel}" data-r="${r}">${r}</button>`).join("") + `</div>`
@@ -147,7 +171,7 @@
             return `<span class="t">${sizeLabel(c.name, t.area)}</span><b>${short(t.price)}</b><span class="d">${t.date.slice(5).replace("-", "/")}</span>`; }).join("")}</div>`
           + (types.length > 3 ? `<small>외 ${types.length - 3}개 타입</small>` : "")
         : "<small>최근 거래 없음</small>";
-      const ask = c.min_ask ? (c.min_ask === c.max_ask ? `${c.min_ask}억` : `${c.min_ask}~${c.max_ask}억`) : "-";
+      const ask = askCell(c);
       return `<tr tabindex="0" data-n="${c.name}">
         <td><b>${c.name}</b><br><small>${c.zone}</small></td><td>${c.dong}</td>
         <td>${c.built || "-"}년<br><small>${(c.households || 0).toLocaleString()}세대</small></td>
@@ -160,7 +184,7 @@
       tr.onclick = open; tr.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } };
     });
   }
-
+ 
   // 단지 상세 + 차트
   let chart;
   const palette = ["#1E6A73", "#C23B22", "#2F5BB7", "#8A6D1F", "#6B4C9A"];
@@ -171,6 +195,8 @@
     $("detail").hidden = false;
     $("detail-h").textContent = name;
     $("detail-meta").textContent = `${c.gu} ${c.dong} · ${c.built}년 준공 · ${(c.households || 0).toLocaleString()}세대 · ${c.invest_class || ""}`;
+    let ae = $("detail-asks"); if (!ae) { ae = document.createElement("p"); ae.id = "detail-asks"; ae.className = "meta"; $("detail-meta").after(ae); }
+    ae.textContent = askTypes(c);
     $("detail-body").innerHTML = ts.length ? ts.map((t) => `<tr class="${t.cancel ? "cancel" : ""}">
       <td>${t.date}</td><td>${sizeLabel(name, t.area)}${unit === "평" ? ` <small>전용 ${t.area}㎡</small>` : ""}</td><td>${t.floor}층</td><td class="num">${eok(t.price)}</td></tr>`).join("")
       : `<tr><td colspan="4">이 기간에 연결된 실거래가 없습니다. 이름이 다르게 등록돼 있을 수 있으니 아래 '연결 안 된 단지명'을 확인하세요.</td></tr>`;
@@ -194,7 +220,7 @@
     if (!noScroll) $("detail").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
   }
   $("detail-close").onclick = () => { $("detail").hidden = true; };
-
+ 
   // 동별 흐름
   const dongs = [...new Set(cx.map((c) => c.dong))];
   const ppy = (ts) => ts.length ? ts.reduce((s, t) => s + t.price / (t.area / 3.3058), 0) / ts.length : null;
@@ -206,7 +232,7 @@
       <td class="num">${pa ? Math.round(pa).toLocaleString() + "만" : "-"}</td><td class="num">${pb ? Math.round(pb).toLocaleString() + "만" : "-"}</td>
       <td class="num ${ch > 0 ? "up" : ch < 0 ? "down" : ""}">${ch == null ? "-" : (ch > 0 ? "+" : "") + ch.toFixed(1) + "%"}</td></tr>`;
   }).join("");
-
+ 
   // 구별 주간
   if (weekly && Object.keys(weekly).length) {
     const gus = Object.keys(weekly), weeks = [...new Set(gus.flatMap((g) => weekly[g].map((x) => x.week)))].sort().slice(-8);
@@ -219,12 +245,12 @@
     $("wk-hint").textContent = meta.weekly && meta.weekly.error ? meta.weekly.error
       : "주간 동향은 아직 설정되지 않았습니다. README의 '주간 동향 켜기'를 참고해 REB_API_KEY와 REB_STATBL_ID를 등록하세요.";
   }
-
+ 
   // 연결 안 된 단지명
   $("unmatched").innerHTML = (meta.unmatched || []).slice(0, 80).map((u) => `<li>${u.dong} ${u.apt} <small>(${u.count}건)</small></li>`).join("")
     || "<li>없음</li>";
-
-
+ 
+ 
   // ── 정비사업 현황 + 지역 뉴스 ──
   document.head.insertAdjacentHTML("beforeend", `<style>
     .proj{display:grid;gap:12px}
@@ -297,6 +323,7 @@
     };
     drawTabs();
   }
-
+ 
   renderChips(); renderTable();
 })();
+ 
