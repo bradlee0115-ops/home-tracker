@@ -83,6 +83,11 @@ def fetch_asil(codes):
         try:
             for page in range(1, 151):
                 lst = asil_page(code, page)
+                if page == 1 and not lst:          # 첫 페이지가 비면 일시 차단일 수 있어 10초 뒤 한 번 더
+                    time.sleep(10)
+                    lst = asil_page(code, page)
+                    if not lst:
+                        raise RuntimeError("매물 0건(일시 차단 가능성) — 실패로 처리해 재시도 대상")
                 new = [x for x in lst if x.get("mm_uid") not in seen]
                 if not new:
                     break
@@ -93,6 +98,8 @@ def fetch_asil(codes):
                 time.sleep(0.3)
             ok.append(code)
             streak = 0
+            print(f"아실 {code}: {len(seen)}건")
+            time.sleep(1.5)                          # 동네 사이 쉬어 가며 조회(연속 요청 차단 방지)
         except Exception as e:
             print(f"아실 {code} 실패: {e}")
             fail.append(code)
