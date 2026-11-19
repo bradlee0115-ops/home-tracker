@@ -4,6 +4,8 @@ on:
   schedule:
     - cron: "0 22 * * *"   # 매일 07:00 (한국시간)
     - cron: "0 10 * * *"   # 매일 19:00 (한국시간)
+    - cron: "30 22 * * *"  # 07:30 호가 재시도 (직전 아실 수집이 실패했을 때만 실제로 받음)
+    - cron: "30 10 * * *"  # 19:30 호가 재시도
   workflow_dispatch: {}      # Actions 탭에서 수동 실행
 
 permissions:
@@ -27,7 +29,12 @@ jobs:
           REB_API_KEY: ${{ secrets.REB_API_KEY }}
           REB_STATBL_ID: ${{ secrets.REB_STATBL_ID }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: python scripts/update.py
+        run: |
+          if [[ "${{ github.event.schedule }}" == 30\ * ]]; then
+            python scripts/retry_asks.py
+          else
+            python scripts/update.py
+          fi
       - name: Commit
         run: |
           git config user.name "github-actions[bot]"
